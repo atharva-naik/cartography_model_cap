@@ -68,7 +68,7 @@ class AdaptedRobertaForSequenceClassification(RobertaForSequenceClassification):
             inputs_embeds=inputs_embeds,
         )
         sequence_output = outputs[0]
-        logits = self.classifier(sequence_output)
+        logits = self.classifier(sequence_output).last_hidden_state[:,0,:] # NOTE: logits are accesed this way nowadays 😒 (beacause models return BaseModelOutputWithPoolingAndCrossAttentions nowadays :P)
 
         outputs = (logits,) + outputs  # Modified from original `Transformers` since we need sequence output to summarize.
         if labels is not None:

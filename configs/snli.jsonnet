@@ -6,6 +6,7 @@ local NUM_EPOCHS = 23;
 local SEED = 93078;
 
 local TASK = "SNLI";
+# local DATA_DIR = "/home/swabhas/data/glue/" + TASK;
 local DATA_DIR = "/home/swabhas/data/glue/" + TASK;
 local FEATURES_CACHE_DIR = DATA_DIR + "/cache_" + SEED ;
 

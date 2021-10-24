@@ -1,0 +1,16 @@
+{
+  "data_dir": "snli",
+  "do_eval": true,
+  "do_test": true,
+  "do_train": true,
+  "features_cache_dir": "snli/cache_93078",
+  "learning_rate": 0.000010708609960508476,
+  "model_name_or_path": "roberta-large",
+  "model_type": "roberta",
+  "num_train_epochs": 23,
+  "patience": 3,
+  "per_gpu_train_batch_size": 96,
+  "seed": 93078,
+  "task_name": "SNLI",
+  "test": "snli/diagnostic_1.0_test.jsonl"
+}
