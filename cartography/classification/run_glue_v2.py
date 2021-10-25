@@ -569,15 +569,15 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False, data_split="t
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-    # all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long) # NOTE: Roberta doesn't need token_type_ids
+    all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long) # NOTE: Roberta doesn't need token_type_ids
     all_example_ids = torch.tensor([f.example_id for f in features], dtype=torch.long)
     if output_mode == "classification":
         all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
     elif output_mode == "regression":
         all_labels = torch.tensor([f.label for f in features], dtype=torch.float)
     # NOTE: Roberta doesn't need token_type_ids
-    dataset = TensorDataset(all_input_ids, all_attention_mask, all_labels, all_example_ids)
-    # dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_labels, all_example_ids)
+    # dataset = TensorDataset(all_input_ids, all_attention_mask, all_labels, all_example_ids)
+    dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_labels, all_example_ids)
     return dataset
 
 

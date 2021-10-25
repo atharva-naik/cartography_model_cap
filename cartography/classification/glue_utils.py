@@ -113,17 +113,21 @@ def adapted_glue_convert_examples_to_featuresV2(
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         attention_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
-
+        try:
+            token_type_ids = inputs["token_type_ids"]
+        except KeyError:
+            token_type_ids = [0]*len(input_ids)
+        
         # Zero-pad up to the sequence length.
         padding_length = max_length - len(input_ids)
         if pad_on_left:
             input_ids = ([pad_token] * padding_length) + input_ids
             attention_mask = ([0 if mask_padding_with_zero else 1] * padding_length) + attention_mask
-            # token_type_ids = ([pad_token_segment_id] * padding_length) + token_type_ids
+            token_type_ids = ([pad_token_segment_id] * padding_length) + token_type_ids
         else:
             input_ids = input_ids + ([pad_token] * padding_length)
             attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
-            # token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
+            token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
 
         assert len(input_ids) == max_length, "Error with input length {} vs {}".format(len(input_ids), max_length)
         assert len(attention_mask) == max_length, "Error with input length {} vs {}".format(
@@ -146,13 +150,13 @@ def adapted_glue_convert_examples_to_featuresV2(
             logger.info(f"guid: {example_int_id}")
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
             logger.info("attention_mask: %s" % " ".join([str(x) for x in attention_mask]))
-            # logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
+            logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label))
 
         features.append(
             AdaptedInputFeatures(input_ids=input_ids,
                                  attention_mask=attention_mask,
-                                 # token_type_ids=token_type_ids,
+                                 token_type_ids=token_type_ids,
                                  label=label,
                                  example_id=example_int_id))
 
@@ -164,7 +168,7 @@ def adapted_glue_convert_examples_to_featuresV2(
                     {
                         "input_ids": ex.input_ids,
                         "attention_mask": ex.attention_mask,
-                        # "token_type_ids": ex.token_type_ids,
+                        "token_type_ids": ex.token_type_ids,
                     },
                     ex.label,
                 )

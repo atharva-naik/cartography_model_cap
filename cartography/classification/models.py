@@ -8,6 +8,7 @@ from transformers import (BertForMultipleChoice,
 
 class AdaptedRobertaForSequenceClassification(RobertaForSequenceClassification):
     def __init__(self, config):
+        config.return_dict=False # the model assumes tuple is returned by roberta
         super().__init__(config)
 
 
@@ -68,8 +69,7 @@ class AdaptedRobertaForSequenceClassification(RobertaForSequenceClassification):
             inputs_embeds=inputs_embeds,
         )
         sequence_output = outputs[0]
-        logits = self.classifier(sequence_output).last_hidden_state[:,0,:] # NOTE: logits are accesed this way nowadays 😒 (beacause models return BaseModelOutputWithPoolingAndCrossAttentions nowadays :P)
-
+        logits = self.classifier(sequence_output)
         outputs = (logits,) + outputs  # Modified from original `Transformers` since we need sequence output to summarize.
         if labels is not None:
             if self.num_labels == 1:
@@ -80,7 +80,7 @@ class AdaptedRobertaForSequenceClassification(RobertaForSequenceClassification):
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
-
+            
         return outputs  # (loss), logits, sequence_output, pooled_sequence_output, (hidden_states), (attentions)
 
 
