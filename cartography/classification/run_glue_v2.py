@@ -19,8 +19,8 @@ Finetuning the library models for sequence classification on GLUE-style tasks
 """
 import torch
 import shutil
-import argparse
 import _jsonnet
+import argparse
 import numpy as np
 from tqdm import tqdm, trange
 import os, glob, json, logging, random
@@ -191,12 +191,12 @@ def train(args, train_dataset, model, tokenizer):
 
     train_acc = 0.0
     for epoch, _ in enumerate(train_iterator):
-        epoch_iterator = tqdm(train_dataloader,
+        epoch_iterator = tqdm(train_dataloader, 
                               desc="Iteration",
                               disable=args.local_rank not in [-1, 0],
                               mininterval=10,
                               ncols=100)
-
+        
         train_iterator.set_description(f"train_epoch: {epoch} train_acc: {train_acc:.4f}")
         train_ids = None
         train_golds = None
@@ -301,7 +301,8 @@ def train(args, train_dataset, model, tokenizer):
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
-
+            # break # FOR DEBUGGING
+            
         #### Post epoch eval ####
         # Only evaluate when single GPU otherwise metrics may not average well
         if args.local_rank == -1 and args.evaluate_during_training:
@@ -315,7 +316,10 @@ def train(args, train_dataset, model, tokenizer):
                               train_logits=list(train_logits),
                               train_golds=list(train_golds))
         train_result = compute_metrics(args.task_name, np.argmax(train_logits, axis=1), train_golds)
-        train_acc = train_result["acc"]
+        try:
+            train_acc = train_result["acc"]
+        except KeyError:
+            train_acc = train_result["mnli/acc"]
 
         epoch_log = {"epoch": epoch,
                      "train_acc": train_acc,
@@ -349,8 +353,12 @@ def train(args, train_dataset, model, tokenizer):
 def save_model(args, model, tokenizer, epoch, best_epoch,  best_dev_performance):
     results, _ = evaluate(args, model, tokenizer, prefix="in_training")
     # TODO(SS): change hard coding `acc` as the desired metric, might not work for all tasks.
+    # print(results, results.keys()) # FOR DEBUGGING
     desired_metric = "acc"
     dev_performance = results.get(desired_metric)
+    if dev_performance is None:
+        dev_performance = results.get("mnli/acc")
+    print("\x1b[31;1m", results, "\x1b[0m")
     if dev_performance > best_dev_performance:
         best_epoch = epoch
         best_dev_performance = dev_performance
@@ -361,7 +369,6 @@ def save_model(args, model, tokenizer, epoch, best_epoch,  best_dev_performance)
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-
         logger.info(f"*** Found BEST model, and saved checkpoint. "
             f"BEST dev performance : {dev_performance:.4f} ***")
     return best_dev_performance, best_epoch
@@ -697,7 +704,6 @@ def run_transformer(args):
             model_to_save = (model.module if hasattr(model, "module") else model)
             model_to_save.save_pretrained(args.output_dir)
             tokenizer.save_pretrained(args.output_dir)
-
             # Good practice: save your training arguments together with the trained model
             torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 

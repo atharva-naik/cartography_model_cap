@@ -332,10 +332,15 @@ def adapted_glue_convert_examples_to_features(
 def adapted_glue_compute_metrics(task_name, preds, labels):
     "Adapted from `glue_compute_metrics` to also handle SNLI."
     try:
-        return glue_compute_metrics(task_name, preds, labels)
+        result = glue_compute_metrics(task_name, preds, labels)
+        return result
     except KeyError:
         if task_name in ["snli", "winogrande", "toxic"]:
             # Since MNLI also uses accuracy.
-            return glue_compute_metrics("mnli", preds, labels)
-    raise KeyError(task_name)
+            result = glue_compute_metrics("mnli", preds, labels)
+            if "mnli/acc" in result:
+                result["acc"] = result["mnli_acc"]
+            return result
+        else:
+            raise KeyError(task_name)
 

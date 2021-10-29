@@ -132,3 +132,4 @@ data/
 # ignore task caches
 MNLI/
 runs/
+output/pytorch_model.bin

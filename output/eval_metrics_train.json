@@ -1,0 +1,2 @@
+{"epoch": 0, "train_acc": 0.8661096709464173, "best_dev_performance": 0.8992358634742741, "avg_batch_loss": 67.80132667534053, "learning_rate": 1.0535026571476461e-05}
+{"epoch": 1, "train_acc": 0.9148260003768761, "best_dev_performance": 0.9043301069791136, "avg_batch_loss": 45.38494335266296, "learning_rate": 1.0076981937934006e-05}
