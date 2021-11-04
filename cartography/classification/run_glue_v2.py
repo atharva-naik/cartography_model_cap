@@ -734,6 +734,8 @@ def run_transformer(args):
             prefix += checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
             model = model_class.from_pretrained(checkpoint)
+            # simple loading of pre-trained adapters
+            if args.use_adapter: model.load(args.adapter)
             model.to(args.device)
             for eval_split in eval_splits:
                 save_args_to_file(args, mode=eval_split)
