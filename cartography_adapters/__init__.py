@@ -2,6 +2,11 @@
 import os
 # comment this out except for KGP servers.
 os.environ['OPENBLAS_NUM_THREADS'] = "12"
+try:
+    # utilites for getting/printing args etc..
+    from cartography_adapters.utils import *
+except ImportError:
+    from .utils import *
 
 import torch
 import torch.nn as nn
@@ -41,7 +46,7 @@ class RobertaForCartography(RobertaForSequenceClassification):
         return outputs  # (loss), logits, sequence_output, pooled_sequence_output, (hidden_states), (attentions)
 
     
-def main(**args):
+def hello_world(**args):
     from torch.utils.data import DataLoader
     from transformers import RobertaTokenizer
     try:
@@ -49,7 +54,7 @@ def main(**args):
     except ImportError:
         from .datautils import GLUEDataset
     # number of worker threads to be used for dataloading.
-    num_worker = args.get("num_workers", 1)
+    num_workers = args.get("num_workers", 1)
     # batch size for training
     batch_size = args.get("batch_size", 32)
     # config = RobertaConfig()

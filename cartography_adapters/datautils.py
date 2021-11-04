@@ -9,11 +9,11 @@ os.environ['OPENBLAS_NUM_THREADS'] = "12"
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 print(CURRENT_DIR)
 
-import tqdm
 import shutil
 import argparse
 import pandas as pd
 import pickle as pkl
+from tqdm import tqdm
 from pathlib import Path
 import os, re, json, logging, random
 from typing import Dict, Union, List
@@ -281,7 +281,6 @@ class GLUEDataset(Dataset):
     
     
 if __name__ == "__main__":
-    from tqdm import tqdm
     from transformers import RobertaTokenizer
     
     print("HERE 1")
