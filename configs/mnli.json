@@ -1,6 +1,6 @@
 {
-  "data_dir": "/local/hdd_1/atharva/cartography_multitask/data/MNLI",
-  "features_cache_dir": "/local/hdd_1/atharva/cartography_multitask/MNLI/cache_36891",
+  "data_dir": "/content/drive/MyDrive/SDM/data/MNLI",
+  "features_cache_dir": "MNLI/cache_36891",
   "learning_rate": 0.000010993071205018916,
   "model_name_or_path": "roberta-large",
   "model_type": "roberta",
