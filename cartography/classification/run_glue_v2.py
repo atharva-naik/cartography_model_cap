@@ -735,7 +735,8 @@ def run_transformer(args):
 
             model = model_class.from_pretrained(checkpoint)
             # simple loading of pre-trained adapters
-            if args.use_adapter: model.load(args.adapter)
+            if args.use_adapter: 
+                model.load_adapter(args.adapter)
             model.to(args.device)
             for eval_split in eval_splits:
                 save_args_to_file(args, mode=eval_split)
@@ -774,6 +775,13 @@ def main():
     parser.add_argument("--do_test",
                         action="store_true",
                         help="Whether to run eval on the (OOD) test set.")
+    parser.add_argument("--use_adapter",
+                        action="store_true",
+                        help="Whether to use adapters.")
+    parser.add_argument("--adapter",
+                        type=str,
+                        default="multinli",
+                        help="Whether to use adapters.")
     parser.add_argument("--test",
                         type=os.path.abspath,
                         help="OOD test set.")
