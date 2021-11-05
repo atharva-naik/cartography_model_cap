@@ -9,6 +9,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = "12"
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 print(CURRENT_DIR)
 
+import torch
 import shutil
 import argparse
 import pandas as pd
@@ -17,10 +18,14 @@ from tqdm import tqdm
 from pathlib import Path
 import os, re, json, logging, random
 from typing import Dict, Union, List
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 # from cartography.data_utils_glue import read_glue_tsv
 logger = logging.getLogger(__name__)
-
+try:
+    # utilites for getting/printing args etc..
+    from cartography_adapters.utils import *
+except ImportError:
+    from utils import *
 
 def convert_string_to_unique_number(string: str) -> int:
   """
@@ -208,6 +213,9 @@ def read_jsonl(path, key="pairID",
             
     return data
 
+# Namespaces
+
+## Namespaces for dataset structure info.
 Keys = {}
 Keys["MNLI"] = argparse.Namespace()
 Keys["MNLI"].key = "pairID"
@@ -218,14 +226,34 @@ Keys["SNLI"].key = "pairID"
 Keys["SNLI"].class_key = "gold_label"
 Keys["SNLI"].label_map = {"neutral": 0, "entailment": 1, "contradiction": 2}
 
+## Namespace for tokenization config.
+TokParams = argparse.Namespace()
+### tokenization paramters.
+TokParams.padding = "max_length" # max length strategy for padding (pad to fixed length)
+TokParams.max_length = 100 # the max length for padding.
+TokParams.add_special_tokens=True # add special tokens like [CLS], [SEP]
+'''
+**Longest first strategy as described in the Huggingface Docs:**
+
+Truncate to a maximum length specified with the argument max_length or to the maximum acceptable input length for the model if that argument is not provided. This will truncate token by token, removing a token from the longest sequence in the pair if a pair of sequences (or a batch of pairs) is provided.
+'''
+TokParams.truncation = True # same a `longest_first`
 
 class GLUEDataset(Dataset):
     '''class to read jsonl data.'''
     def __init__(self, path: Union[str, Path], 
-                 tokenizer, task_name="MNLI"):
+                 tokenizer, task_name="MNLI",
+                 tok_params=TokParams):
         # keys for accesing attributes of dataset.
         self.task_name = task_name
+        print("Running Task:", task_name)
+        self.tok_params = tok_params
+        print("Tokenization Parameters:")
+        pprint_args(self.tok_params)
+        self.tokenizer = tokenizer
+        print("Dataset Structure:")
         self.keys = Keys.get(task_name)
+        pprint_args(self.keys)
         if self.keys is None:
             exit("task is not supported!!")
         # caching paths
@@ -257,44 +285,68 @@ class GLUEDataset(Dataset):
         return len(self.proc_data)
     
     def _preproc(self, record_item: dict):
-        if self.task_name in ["SNLI", "MNLI"]:
-            id = record_item[self.keys.key]
-            s1 = record_item["sentence1"]
-            s2 = record_item["sentence2"]
-            tok_dict = tokenizer(s1, s2)
-            iids = tok_dict["input_ids"]
-            attn_mask = tok_dict["attention_mask"]
-            # token type ids (useful only for BERT, ignored for roberta). For roberta a placeholder of all zeros is used.
-            tok_typ_ids = tok_dict.get("token_type_ids", [0]*len(iids))
-            label = self.keys.label_map.get(
-                record_item[self.keys.class_key], 
-                len(self.keys.label_map)+1
-            )
-            
-            return [
-                id, iids, attn_mask, 
-                tok_typ_ids, label
-            ]
+        id = record_item[self.keys.key]
+        s1 = record_item["sentence1"]
+        s2 = record_item["sentence2"]
+        tok_dict = self.tokenizer(
+            s1, s2,
+            **vars(self.tok_params)
+        )
+        iids = tok_dict["input_ids"]
+        attn_mask = tok_dict["attention_mask"]
+        # token type ids (useful only for BERT, ignored for roberta). For roberta a placeholder of all zeros is used.
+        tok_typ_ids = tok_dict.get("token_type_ids", [0]*len(iids))
+        label = self.keys.label_map.get(
+            record_item[self.keys.class_key], 
+            len(self.keys.label_map)+1
+        )
+
+        return {
+            "id": id,
+            "input_ids": iids,
+            "attention_mask": attn_mask,
+            "token_type_ids": tok_typ_ids,
+            "label": label,
+        }
     
     def __getitem__(self, index):
-        return self.proc_data[index]
+        tok_dict = self.proc_data[index]
+        tensor_dict = {k: torch.as_tensor(v) for k,v in tok_dict.items()}
+        
+        return tensor_dict
     
     
 if __name__ == "__main__":
+    import time
+    import transformers
     from transformers import RobertaTokenizer
+    transformers.logging.set_verbosity_error()
     
-    print("HERE 1")
+    # print("HERE 1")
     tokenizer = RobertaTokenizer.from_pretrained("../roberta-base-tok") 
     # RobertaTokenizer.from_pretrained("roberta-base")
-    print("HERE 2")
+    # print("HERE 2")
     # tokenizer.save_pretrained("../roberta-base-tok")
-    print("HERE 3")
+    # print("HERE 3")
+    s = time.time()
     trainset = GLUEDataset(
         path="./data/MNLI/original/multinli_1.0_train.jsonl",
         tokenizer=tokenizer, 
         task_name="MNLI",
     )
-    print("HERE 4")
+    print(f"dataset loaded in {time.time()-s}s")
+    # print("HERE 4")
     for i in tqdm(range(len(trainset))):
         id, iids, attn_mask, tok_typ_ids, label = trainset[i]
+        if id == 591262: break
     print(id, iids, attn_mask, tok_typ_ids, label)
+    trainloader = DataLoader(trainset, batch_size=32, num_workers=4, shuffle=False)
+    from pprint import pprint
+    for batch in trainloader:
+        pprint(batch)
+        break
+    # total iteration time.
+    s = time.time()
+    for batch in tqdm(trainloader):
+        pass
+    print(f"dataloader iteration took {time.time()-s}s")

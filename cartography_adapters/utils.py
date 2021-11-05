@@ -22,6 +22,18 @@ def get_cli_args() -> argparse.Namespace:
 
     return args
 
+def set_seed(args):
+    '''seed random, numpy and torch'''
+    import torch
+    import random
+    import numpy as np
+    
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
+
 def pprint_args(args: Union[dict, argparse.Namespace], 
                 max_key_col_width: int=40, 
                 max_val_col_width: int=40) -> None:
