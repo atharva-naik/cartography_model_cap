@@ -2,19 +2,16 @@
 import os
 # comment this out except for KGP servers.
 os.environ['OPENBLAS_NUM_THREADS'] = "12"
-try:
-    # utilites for getting/printing args etc..
-    from cartography_adapters.utils import *
-    from cartography_adapters.models import *
-except ImportError:
-    from utils import *
-    from models import *
-    
+
+import json
 import torch
+import numpy as np
 import transformers
+from tqdm import tqdm
 import torch.nn as nn
 from pathlib import Path
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from transformers import (
     AdamW,
     BertModel,
@@ -22,8 +19,19 @@ from transformers import (
     BertConfig,
     RobertaModel,
     RobertaConfig,
+    BertTokenizer,
+    RobertaTokenizer,
     get_linear_schedule_with_warmup,
 )
+try:
+    # utilites for getting/printing args etc..
+    from cartography_adapters.utils import *
+    from cartography_adapters.models import *
+    from cartography_adapters.datautils import GLUEDataset
+except ImportError:
+    from utils import *
+    from models import *
+    from datautils import GLUEDataset
 # set logging level for transformers
 transformers.logging.set_verbosity_error()
 # the default trainer config.
@@ -51,7 +59,7 @@ TrainConfig.eps = 1e-8 # Adam epsilon.
 TrainConfig.seed = 2021 # random seed to be used.
 TrainConfig.num_epochs = 24 # max number of epochs.
 TrainConfig.patience = 3
-TrainConfig.batch_size = 32 # training batch size.
+TrainConfig.batch_size = 64 # training batch size.
 TrainConfig.num_classes = 3 # number of classes in target task.
 TrainConfig.num_workers = 4 # number of threads for dataloading.
 TrainConfig.device = "cuda:0" # device for training.
@@ -69,6 +77,7 @@ class TrainingDynamics:
                  tokenizer_name_or_path: str="../roberta-base-tok", **trainer_config):
         self.trainer_config = TrainConfig
         self.trainer_config.update(**trainer_config)
+        pprint_args(vars(self.trainer_config))
         model_config = AutoConfig.from_pretrained(
             model_name_or_path,
             num_labels=self.trainer_config.num_classes,            
@@ -93,9 +102,11 @@ class TrainingDynamics:
             tokenizer_name_or_path
         )
         self.model.to(self.trainer_config.device)
+        self.gpu_mem_manager = GPUMemoryManager(self.trainer_config.device)
     
     def train(self, path: Union[str, Path]):
         # create datasets and dataloaders.
+        set_seed(self.trainer_config.seed)
         path = str(path)
         self.trainset = GLUEDataset(
             path=path, tokenizer=self.tokenizer, 
@@ -113,19 +124,25 @@ class TrainingDynamics:
         )
         self.train_acc = 0
         self.best_epoch = 0
+        self.train_loss = 0
         self.current_epoch = 0
         self.model.zero_grad()
-        self.trainer_config.train_dy_dir = os.path.join(
+        train_dy_dir = os.path.join(
             self.trainer_config.train_dy_dir,
             "training_dynamics"
         )
         os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
         for i in range(self.trainer_config.num_epochs):
+            epoch_log_path = os.path.join(
+                self.trainer_config.train_dy_dir,
+                f"epoch_{i}.log"
+            )
+            with open(epoch_log_path, "w") as f: pass
             file_path = os.path.join(
-                self.trainer_config.train_dy_dir, 
+                train_dy_dir, 
                 f"dynamics_epoch_{i}.jsonl"
             )
-            train_dy_file_ptr = open(file_path, "w")
+            with open(file_path, "w") as f: pass
             self.best_epoch = i
             self.current_epoch = i
             batch_iterator = tqdm(
@@ -133,8 +150,9 @@ class TrainingDynamics:
                 total=len(self.trainloader),
                 desc="",
             )
+            epoch_log = {}
             for step, batch in batch_iterator:
-                desc = f"{self.model_type}-{self.trainer_config.task_name}-train: {i}/{self.trainer_config.num_epochs} {step}/{len(self.trainloader)}"
+                desc = f"{self.model_type}:{i}/{self.trainer_config.num_epochs} loss:{self.train_loss/(step+1e-12):.3f} acc:{(100*self.train_acc/(self.trainer_config.batch_size*step+1e-12)):.2f}"
                 batch_iterator.set_description(desc)              
                 self.model.train()
                 # move inputs to device.
@@ -142,31 +160,51 @@ class TrainingDynamics:
                 batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
                 if self.model_type == "bert":
                     batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
+                batch["label"] = batch["label"].to(self.trainer_config.device)
                 # forward step.
-                loss, logits = self.model(
+                output = self.model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
                     token_type_ids=batch["token_type_ids"],
                     labels=batch["label"]
                 )
-                logits = logits.detach().cpu().tolist()
+                loss = output["loss"]
+                logits = output["logits"]
+                logits = logits.cpu().detach().tolist()
+                loss.backward()
                 if self.trainer_config.grad_accumulation_steps > 1:
                     loss = loss / self.trainer_config.grad_accumulation_steps
-                for id, logit, label in zip(batch["ids"], logits, batch["label"])
+                # move ids and labels to cpu and convert to list, for logging td.
+                ids = batch["id"].cpu().detach().tolist()
+                labels = batch["label"].cpu().detach().tolist()
+                for id, logit, label in zip(ids, logits, labels):
+                    # print(label, id)
                     logits_dict = {
                         "id": id,
                         f"logits_epoch_{i}": logit,
                         "gold": label 
                     }
-                    train_dy_file_ptr.write(
-                        json.dumps(logits_dict)+"\n"
-                    )
+                    pred = np.argmax(logit)
+                    if pred == label: self.train_acc += 1
+                    with open(file_path, "a") as f:
+                        f.write(json.dumps(logits_dict)+"\n")
                 if (step + 1) % self.trainer_config.grad_accumulation_steps == 0:
-                    nn.utils.clip_grad_norm_(model.parameters(), 1)
+                    nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+                
+                loss = loss.cpu().detach()
+                self.train_loss += loss.item()
+                epoch_log["loss"] = f"{(self.train_loss/(step+1)):.5f}"
+                epoch_log["free_memory"] = self.gpu_mem_manager.free()
+                epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
+                with open(epoch_log_path, "a") as f:
+                    f.write(json.dumps(epoch_log)+"\n")
+                
+                self.optimizer.step()
+                self.scheduler.step()  # Update learning rate schedule
+                self.model.zero_grad()
             # patience condition from original repo: stop training if performance doesn't improve after `patience` no. of epochs.
             if self.current_epoch - self.best_epoch >= self.trainer_config.patience:
                 break
-            train_dy_file_ptr.close()
         
     def evaluate(self) -> dict:
         '''run eval and return dictionary of metrics (acc. only for MNLI.)'''

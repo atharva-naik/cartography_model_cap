@@ -1,3 +1,5 @@
+import torch
+import torch.nn as nn
 from transformers import (BertConfig,
                           RobertaConfig,
                           BertForSequenceClassification, 
@@ -27,15 +29,15 @@ class RobertaForCartography(RobertaForSequenceClassification):
         )
         sequence_output = outputs.last_hidden_state
         logits = self.classifier(sequence_output)
-        print(sequence_output.shape, logits.shape, self.num_labels)
+        # print(sequence_output.shape, logits.shape, self.num_labels)
         output = {}
         if labels is not None:
             # single target class implies regression.
             if self.num_labels == 1:
-                criterion = MSELoss()
+                criterion = nn.MSELoss()
                 loss = criterion(logits.view(-1), labels.view(-1))
             else:
-                criterion = CrossEntropyLoss()
+                criterion = nn.CrossEntropyLoss()
                 loss = criterion(logits.view(-1, self.num_labels), labels.view(-1))
             # return loss and logits if label is given
             output["loss"] = loss
