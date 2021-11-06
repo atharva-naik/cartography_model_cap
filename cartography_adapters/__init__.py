@@ -54,7 +54,7 @@ class TrainerNamespace(argparse.Namespace):
 #         with open(path, "w") as f:
 #             json.dump(args_dict, f, indent=4)
 TrainConfig = TrainerNamespace()
-TrainConfig.lr = 1e-4 # 1.099e-5 # initial learning rate.
+TrainConfig.lr = 1e-5 # 1.099e-5 # initial learning rate.
 TrainConfig.eps = 1e-8 # Adam epsilon.
 TrainConfig.seed = 2021 # random seed to be used.
 TrainConfig.num_epochs = 24 # max number of epochs.
@@ -140,6 +140,7 @@ class TrainingDynamics:
         )
         os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
         for i in range(self.trainer_config.num_epochs):
+            self.model.train()
             epoch_log_path = os.path.join(
                 self.trainer_config.train_dy_dir,
                 f"epoch_{i}.log"
@@ -161,7 +162,7 @@ class TrainingDynamics:
             for step, batch in batch_iterator:
                 desc = f"{self.model_type}:{i}/{self.trainer_config.num_epochs} loss:{self.train_loss/(step+1e-12):.3f} acc:{(100*self.train_acc/(self.trainer_config.batch_size*step+1e-12)):.2f}"
                 batch_iterator.set_description(desc)              
-                self.model.train()
+                self.model.zero_grad()
                 # move inputs to device.
                 batch["input_ids"] = batch["input_ids"].to(self.trainer_config.device)
                 batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
@@ -178,7 +179,8 @@ class TrainingDynamics:
                 loss = output["loss"]
                 logits = output["logits"]
                 logits = logits.cpu().detach().tolist()
-                loss.backward()
+                if loss.isnan().item() is False:
+                    loss.backward()
                 if self.trainer_config.grad_accumulation_steps > 1:
                     loss = loss / self.trainer_config.grad_accumulation_steps
                 # move ids and labels to cpu and convert to list, for logging td.
@@ -199,20 +201,22 @@ class TrainingDynamics:
                     nn.utils.clip_grad_norm_(self.model.parameters(), 1)
                 
                 loss = loss.cpu().detach()
-                self.train_loss += loss.item()
+                if loss.isnan().item() is False:
+                    self.train_loss += loss.item()
                 epoch_log["loss"] = f"{(self.train_loss/(step+1)):.5f}"
                 epoch_log["free_memory"] = self.gpu_mem_manager.free()
-                epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
+                # epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
                 # FOR DEBUGGING
                 # if step == 50: break
                 with open(epoch_log_path, "a") as f:
                     f.write(json.dumps(epoch_log)+"\n")
                 
                 self.optimizer.step()
-                self.scheduler.step()  # Update learning rate schedule
-                self.model.zero_grad()
+                # self.model.zero_grad()
             self.train_loss /= len(self.trainloader)
             self.train_acc /= len(self.trainloader)
+            self.scheduler.step()  # Update learning rate schedule
+            
             if eval_path:
                 eval_acc, _ = self.evaluate(eval_path)
                 if eval_acc > self.best_eval_acc:
@@ -249,8 +253,8 @@ class TrainingDynamics:
             total=len(self.evalloader),
             desc="",
         )
+        self.model.eval()
         for step, batch in batch_iterator:
-            self.model.eval()
             desc = f"{self.model_type}: loss:{self.eval_loss/(step+1e-12):.3f} acc:{(100*self.eval_acc/(self.trainer_config.batch_size*step+1e-12)):.2f}"
             batch_iterator.set_description(desc)   
             
