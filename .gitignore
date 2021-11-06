@@ -136,3 +136,5 @@ output/pytorch_model.bin
 roberta-MNLI/pytorch_model.bin
 # ignore cached features.
 MNLI_cache/
+# ignore saved model
+rob_base_mnli_adapter_multinli/roberta-base-mnli-adapter-multinli.pt

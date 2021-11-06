@@ -11,7 +11,10 @@ def main():
     # print arguments.
     pprint_args(cli_args)
     td = TrainingDynamics("roberta", "roberta-base", "../roberta-base-tok")
-    td.train("./data/MNLI/original/multinli_1.0_train.jsonl")
+    td.train(
+        "./data/MNLI/original/multinli_1.0_train.jsonl", 
+        "./data/MNLI/original/multinli_1.0_dev_matched.jsonl"
+    )
     # hello_world(**vars(cli_args))
     
 if __name__ == "__main__":
