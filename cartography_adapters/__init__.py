@@ -7,7 +7,10 @@ import json
 import torch
 import numpy as np
 import transformers
-from tqdm import tqdm
+if notebook:
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
 import torch.nn as nn
 from pathlib import Path
 import torch.nn.functional as F
@@ -59,7 +62,7 @@ TrainConfig.eps = 1e-8 # Adam epsilon.
 TrainConfig.seed = 2021 # random seed to be used.
 TrainConfig.num_epochs = 24 # max number of epochs.
 TrainConfig.patience = 3
-TrainConfig.batch_size = 96 # training batch size.
+TrainConfig.batch_size = 64 # training batch size.
 TrainConfig.num_classes = 3 # number of classes in target task.
 TrainConfig.num_workers = 4 # number of threads for dataloading.
 TrainConfig.device = "cuda:0" # device for training.
@@ -69,8 +72,12 @@ TrainConfig.warmup_steps = 0
 TrainConfig.grad_accumulation_steps = 1 
 TrainConfig.target_metric = "acc" # target metric is used for model saving.
 # directory for storing training dynamics.
-TrainConfig.train_dy_dir = "rob_base_mnli_adapter_multinli" 
-TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
+if notebook:
+    TrainConfig.train_dy_dir = "/content/drive/MyDrive/SDM/rob_base_mnli_adapter_multinli" 
+    TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
+else:
+    TrainConfig.train_dy_dir = "rob_base_mnli_adapter_multinli" 
+    TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
     
     
 class TrainingDynamics:
