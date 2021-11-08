@@ -3,6 +3,8 @@ import os
 # comment this out except for KGP servers.
 os.environ['OPENBLAS_NUM_THREADS'] = "12"
 
+notebook=False
+
 import json
 import torch
 import numpy as np
@@ -76,8 +78,8 @@ if notebook:
     TrainConfig.train_dy_dir = "/content/drive/MyDrive/SDM/rob_base_mnli_adapter_multinli" 
     TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
 else:
-    TrainConfig.train_dy_dir = "rob_base_mnli_adapter_multinli" 
-    TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
+    TrainConfig.train_dy_dir = "rob_base_mnli" 
+    TrainConfig.save_as = "roberta-base-mnli.pt" # name to be given to the saved model.
     
     
 class TrainingDynamics:
@@ -113,6 +115,9 @@ class TrainingDynamics:
         self.gpu_mem_manager = GPUMemoryManager(self.trainer_config.device)
         self.best_epoch = 0
         self.current_epoch = 0
+        self.task_map = {
+            "mnli": "multinli"
+        }
     
     def train(self, path: Union[str, Path], eval_path: Union[str, Path, None]=None):
         # create datasets and dataloaders.
@@ -128,19 +133,19 @@ class TrainingDynamics:
         )
         # create scheduler.
         total_steps = len(self.trainloader) // self.trainer_config.grad_accumulation_steps * self.trainer_config.num_epochs
-        self.scheduler = get_linear_schedule_with_warmup(
-            self.optimizer, num_training_steps=total_steps,
-            num_warmup_steps=self.trainer_config.warmup_steps
-        )
+#         self.scheduler = get_linear_schedule_with_warmup(
+#             self.optimizer, num_training_steps=total_steps,
+#             num_warmup_steps=self.trainer_config.warmup_steps
+#         )
         self.train_acc = 0
         self.best_eval_acc = 0
         self.train_loss = 0
         
-        self.model.zero_grad()
         train_dy_dir = os.path.join(
             self.trainer_config.train_dy_dir,
             "training_dynamics"
         )
+        os.makedirs(train_dy_dir, exist_ok=True)
         save_as = os.path.join(
             self.trainer_config.train_dy_dir,
             self.trainer_config.save_as
@@ -148,6 +153,214 @@ class TrainingDynamics:
         os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
         for i in range(self.trainer_config.num_epochs):
             self.model.train()
+            epoch_log_path = os.path.join(
+                self.trainer_config.train_dy_dir,
+                f"epoch_{i}.log"
+            )
+            with open(epoch_log_path, "w") as f: pass
+            file_path = os.path.join(
+                train_dy_dir, 
+                f"dynamics_epoch_{i}.jsonl"
+            )
+            with open(file_path, "w") as f: pass
+            self.current_epoch = i
+            batch_iterator = tqdm(
+                enumerate(self.trainloader),
+                total=len(self.trainloader),
+                desc="",
+            )
+            epoch_log = {}
+            tot = 1e-12
+            for step, batch in batch_iterator:
+                desc = f"{self.model_type}:{i}/{self.trainer_config.num_epochs} loss:{self.train_loss/(step+1e-12):.3f} acc:{(100*self.train_acc/tot):.2f}"
+                batch_iterator.set_description(desc)              
+                self.model.zero_grad()
+                # move inputs to device.
+                batch["input_ids"] = batch["input_ids"].to(self.trainer_config.device)
+                batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
+                if self.model_type == "bert":
+                    batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
+                batch["label"] = batch["label"].to(self.trainer_config.device)
+                # forward step.
+                output = self.model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    token_type_ids=batch["token_type_ids"],
+                    labels=batch["label"]
+                )
+                loss = output["loss"]
+                logits = output["logits"]
+                logits = logits.cpu().detach().tolist()
+                if loss.isnan().item() is False:
+                    loss.backward()
+                if self.trainer_config.grad_accumulation_steps > 1:
+                    loss = loss / self.trainer_config.grad_accumulation_steps
+                # move ids and labels to cpu and convert to list, for logging td.
+                ids = batch["id"].cpu().detach().tolist()
+                labels = batch["label"].cpu().detach().tolist()
+                for id, logit, label in zip(ids, logits, labels):
+                    tot += 1
+                    # print(label, id)
+                    logits_dict = {
+                        "guid": id,
+                        f"logits_epoch_{i}": logit,
+                        "gold": label 
+                    }
+                    pred = np.argmax(logit)
+                    if pred == label: self.train_acc += 1
+                    with open(file_path, "a") as f:
+                        f.write(json.dumps(logits_dict)+"\n")
+                if (step + 1) % self.trainer_config.grad_accumulation_steps == 0:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+                
+                loss = loss.cpu().detach()
+                if loss.isnan().item() is False:
+                    self.train_loss += loss.item()
+                epoch_log["loss"] = f"{(self.train_loss/(step+1)):.5f}"
+                epoch_log["free_memory"] = self.gpu_mem_manager.free()
+                # epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
+                # FOR DEBUGGING
+                # if step == 50: break
+                with open(epoch_log_path, "a") as f:
+                    f.write(json.dumps(epoch_log)+"\n")
+                
+                self.optimizer.step()
+                # self.model.zero_grad()
+            self.train_loss /= len(self.trainloader)
+            self.train_acc /= tot
+            # self.scheduler.step()  # Update learning rate schedule
+            if eval_path:
+                eval_acc, _ = self.evaluate(eval_path)
+                print("eval_acc=", eval_acc)
+                if eval_acc > self.best_eval_acc:
+                    self.best_eval_acc = eval_acc
+                    self.best_epoch = self.current_epoch
+                    print(f"saving model with best_acc={eval_acc}, best_epoch={self.best_epoch} at {save_as}")
+                    # save model with best eval accuracy.
+                    self.save(save_as)
+            # patience condition from original repo: stop training if performance doesn't improve after `patience` no. of epochs.
+            if self.current_epoch - self.best_epoch >= self.trainer_config.patience:
+                break
+            self.train_acc = 0
+            self.train_loss = 0
+        
+    def evaluate(self, path: Union[str, Path]) -> dict:
+        '''run eval and return dictionary of metrics (acc. only for MNLI.)'''
+        path = str(path)
+        self.eval_acc = 0
+        self.eval_loss = 0
+        
+        predictions = []
+        if not hasattr(self, "evalloader"):
+            print("loading eval data")
+            self.evalset = GLUEDataset(
+                path=path, tokenizer=self.tokenizer, 
+                task_name=self.trainer_config.task_name,
+            )
+            self.evalloader = DataLoader(
+                self.evalset, batch_size=self.trainer_config.batch_size,  
+                shuffle=False, num_workers=self.trainer_config.num_workers
+            )
+        batch_iterator = tqdm(
+            enumerate(self.evalloader),
+            total=len(self.evalloader),
+            desc="",
+        )
+        self.model.eval()
+        tot = 1e-12
+        for step, batch in batch_iterator:
+            desc = f"{self.model_type}: loss:{self.eval_loss/(step+1e-12):.3f} acc:{(100*self.eval_acc/(tot+1e-12)):.2f}"
+            batch_iterator.set_description(desc)   
+            
+            with torch.no_grad():
+                # move inputs to device.
+                batch["input_ids"] = batch["input_ids"].to(self.trainer_config.device)
+                batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
+                if self.model_type == "bert":
+                    batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
+                batch["label"] = batch["label"].to(self.trainer_config.device)
+                output = self.model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    token_type_ids=batch["token_type_ids"],
+                    labels=batch["label"]
+                )
+            loss = output["loss"]
+            logits = output["logits"]
+            # accumulate eval loss.
+            loss = loss.cpu().detach()
+            self.eval_loss += loss.item()
+            # move ids, labels and logits to cpu, to save predictions.
+            ids = batch["id"].cpu().detach().tolist()
+            logits = logits.cpu().detach().tolist()
+            labels = batch["label"].cpu().detach().tolist()
+            for id, logit, label in zip(ids, logits, labels):
+                tot += 1
+                pred = np.argmax(logit)
+                predictions.append({
+                    "guid": id,
+                    "pred": pred,
+                    "gold": label,
+                    f"logits_epoch_{self.current_epoch}": logit,
+                })
+                if pred == label: self.eval_acc += 1
+        self.eval_loss /= len(self.evalloader)
+        self.eval_acc /= tot
+        print(self.eval_acc, tot)
+    
+        return self.eval_acc, predictions
+    
+    def save(self, ckpt_path: Union[str, Path]):
+        ckpt_dict = {
+            "epoch": self.current_epoch,
+            "metrics": {
+                "train_loss": self.train_loss,
+                "train_acc": self.train_acc,
+                "val_loss": self.eval_loss,
+                "val_acc": self.eval_acc,
+            },
+            "args": self.trainer_config._serialize(),
+            "state_dict": self.model.state_dict(),
+        }
+        torch.save(ckpt_dict, ckpt_path)
+        
+    def train_adapter(self, path: Union[str, Path], eval_path: Union[str, Path, None]=None):
+        # create datasets and dataloaders.
+        path = str(path)
+        set_seed(self.trainer_config.seed)
+        self.trainset = GLUEDataset(
+            path=path, tokenizer=self.tokenizer, 
+            task_name=self.trainer_config.task_name,
+        )
+        self.trainloader = DataLoader(
+            self.trainset, batch_size=self.trainer_config.batch_size,  
+            shuffle=True, num_workers=self.trainer_config.num_workers
+        )
+        # create scheduler.
+        # total_steps = len(self.trainloader) // self.trainer_config.grad_accumulation_steps * self.trainer_config.num_epochs
+        # self.scheduler = get_linear_schedule_with_warmup(
+        #     self.optimizer, num_training_steps=total_steps,
+        #     num_warmup_steps=self.trainer_config.warmup_steps
+        # )
+        self.train_acc = 0
+        self.train_loss = 0
+        self.best_eval_acc = 0
+        train_dy_dir = os.path.join(self.trainer_config.train_dy_dir,
+            "training_dynamics"
+        )
+        os.makedirs(train_dy_dir, exist_ok=True)
+        save_as = os.path.join(
+            self.trainer_config.train_dy_dir,
+            self.trainer_config.save_as
+        )
+        os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
+        for i in range(self.trainer_config.num_epochs):
+            task_name = self.task_map.get(
+                self.trainer_config.task_name, 
+                self.trainer_config.task_name
+            )
+            # changed for training adapter only.
+            self.model.train_adapter(task_name) 
             epoch_log_path = os.path.join(
                 self.trainer_config.train_dy_dir,
                 f"epoch_{i}.log"
@@ -222,7 +435,7 @@ class TrainingDynamics:
                 # self.model.zero_grad()
             self.train_loss /= len(self.trainloader)
             self.train_acc /= len(self.trainloader)
-            self.scheduler.step()  # Update learning rate schedule
+            # self.scheduler.step()  # Update learning rate schedule
             
             if eval_path:
                 eval_acc, _ = self.evaluate(eval_path)
@@ -237,83 +450,6 @@ class TrainingDynamics:
                 break
             self.train_acc = 0
             self.train_loss = 0
-        
-    def evaluate(self, path: Union[str, Path]) -> dict:
-        '''run eval and return dictionary of metrics (acc. only for MNLI.)'''
-        path = str(path)
-        self.eval_acc = 0
-        self.eval_loss = 0
-        
-        predictions = []
-        if not hasattr(self, "evalloader"):
-            print("loading eval data")
-            self.evalset = GLUEDataset(
-                path=path, tokenizer=self.tokenizer, 
-                task_name=self.trainer_config.task_name,
-            )
-            self.evalloader = DataLoader(
-                self.evalset, batch_size=self.trainer_config.batch_size,  
-                shuffle=False, num_workers=self.trainer_config.num_workers
-            )
-        batch_iterator = tqdm(
-            enumerate(self.evalloader),
-            total=len(self.evalloader),
-            desc="",
-        )
-        self.model.eval()
-        for step, batch in batch_iterator:
-            desc = f"{self.model_type}: loss:{self.eval_loss/(step+1e-12):.3f} acc:{(100*self.eval_acc/(self.trainer_config.batch_size*step+1e-12)):.2f}"
-            batch_iterator.set_description(desc)   
-            
-            with torch.no_grad():
-                # move inputs to device.
-                batch["input_ids"] = batch["input_ids"].to(self.trainer_config.device)
-                batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
-                if self.model_type == "bert":
-                    batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
-                batch["label"] = batch["label"].to(self.trainer_config.device)
-                output = self.model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    token_type_ids=batch["token_type_ids"],
-                    labels=batch["label"]
-                )
-            loss = output["loss"]
-            logits = output["logits"]
-            # accumulate eval loss.
-            loss = loss.cpu().detach()
-            self.eval_loss += loss.item()
-            # move ids, labels and logits to cpu, to save predictions.
-            ids = batch["id"].cpu().detach().tolist()
-            logits = logits.cpu().detach().tolist()
-            labels = batch["label"].cpu().detach().tolist()
-            for id, logit, label in zip(ids, logits, labels):
-                pred = np.argmax(logit)
-                predictions.append({
-                    "guid": id,
-                    "pred": pred,
-                    "gold": label,
-                    f"logits_epoch_{self.current_epoch}": logit,
-                })
-                if pred == label: self.eval_acc += 1
-        self.eval_loss /= len(self.evalloader)
-        self.eval_acc /= len(self.evalloader)
-
-        return self.eval_acc, predictions
-    
-    def save(self, ckpt_path: Union[str, Path]):
-        ckpt_dict = {
-            "epoch": self.current_epoch,
-            "metrics": {
-                "train_loss": self.train_loss,
-                "train_acc": self.train_acc,
-                "val_loss": self.eval_loss,
-                "val_acc": self.eval_acc,
-            },
-            "args": self.trainer_config._serialize(),
-            "state_dict": self.model.state_dict(),
-        }
-        torch.save(ckpt_dict, ckpt_path)
     
     
 def hello_world(**args):

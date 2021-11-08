@@ -49,10 +49,19 @@ class RobertaForCartography(RobertaForSequenceClassification):
     
 class RobertaWithAdapterForCartography(RobertaModelWithHeads):
     '''analogus to AdaptedRobertaForSequenceClassification. Includes support for adapters.'''
-    def __init__(self, config=None):
+    def __init__(self, num_labels=2, task_name="mnli", config=None):
         # if no config is supplied use the default roberta config (which is modified by adapter transformers.)
+        task_map = {
+            "mnli": "multinli",
+        }
+        task_name = task_map.get(task_name, task_name)
         if config is None: config = RobertaConfig()
-        super(RobertaForCartography, self).__init__(config)
+        super(RobertaWithAdapterForCartography, self).__init__(config)
+        self.add_classification_head(task_name, num_labels=num_labels)
+        self.adapter_task_name = task_name
+        
+    def activate(self):
+        self.set_active_adapters(self.adapter_task_name)
         
     def forward(self, input_ids, attention_mask, labels=None,
                 token_type_ids=None, inputs_embeds=None, **kwargs):

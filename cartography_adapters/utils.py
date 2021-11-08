@@ -61,12 +61,12 @@ def pprint_args(args: Union[dict, argparse.Namespace],
             val = val[:width-3]+"..."
         return val.rjust(width)
     # print args.
-    print("—"*cols)
+    # print("—"*cols)
     for key, val in args_dict.items():
         key = trunc_key(key, key_col_width)
         val = trunc_val(val, val_col_width)
         print(key, ":", val)
-    print("—"*cols)
+    # print("—"*cols)
 # def get_free_mem():
 #     import torch
 #     t = torch.cuda.get_device_properities(0).total_memory
