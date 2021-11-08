@@ -14,7 +14,7 @@ def main():
     # if not notebook:
     #     td = TrainingDynamics("roberta", "roberta-base", "../roberta-base-tok")
     # else:
-    td = TrainingDynamics("roberta", "roberta-base", "../roberta-base-tok")
+    td = TrainingDynamics("roberta", "roberta-large", "../roberta-large-tok")
     if notebook:
         td.train(
             "/content/drive/MyDrive/SDM/data/MNLI/original/multinli_1.0_train.jsonl", 

@@ -1,7 +1,7 @@
 # code for tracking training dynamics for transformers+adapters.
 import os
 # comment this out except for KGP servers.
-os.environ['OPENBLAS_NUM_THREADS'] = "12"
+# os.environ['OPENBLAS_NUM_THREADS'] = "12"
 
 notebook=False
 
@@ -26,16 +26,16 @@ from transformers import (
     RobertaConfig,
     BertTokenizer,
     RobertaTokenizer,
+    BertForSequenceClassification,
+    RobertaForSequenceClassification,
     get_linear_schedule_with_warmup,
 )
 try:
     # utilites for getting/printing args etc..
     from cartography_adapters.utils import *
-    from cartography_adapters.models import *
     from cartography_adapters.datautils import GLUEDataset
 except ImportError:
     from utils import *
-    from models import *
     from datautils import GLUEDataset
 # set logging level for transformers
 transformers.logging.set_verbosity_error()
@@ -59,7 +59,7 @@ class TrainerNamespace(argparse.Namespace):
 #         with open(path, "w") as f:
 #             json.dump(args_dict, f, indent=4)
 TrainConfig = TrainerNamespace()
-TrainConfig.lr = 1e-5 # 1.099e-5 # initial learning rate.
+TrainConfig.lr = 2e-5 # 1.099e-5 # initial learning rate.
 TrainConfig.eps = 1e-8 # Adam epsilon.
 TrainConfig.seed = 2021 # random seed to be used.
 TrainConfig.num_epochs = 24 # max number of epochs.
@@ -78,8 +78,8 @@ if notebook:
     TrainConfig.train_dy_dir = "/content/drive/MyDrive/SDM/rob_base_mnli_adapter_multinli" 
     TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
 else:
-    TrainConfig.train_dy_dir = "rob_base_mnli" 
-    TrainConfig.save_as = "roberta-base-mnli.pt" # name to be given to the saved model.
+    TrainConfig.train_dy_dir = "rob_large_mnli_lr2" 
+    TrainConfig.save_as = "roberta-large-mnli.pt" # name to be given to the saved model.
     
     
 class TrainingDynamics:
@@ -93,9 +93,9 @@ class TrainingDynamics:
             num_labels=self.trainer_config.num_classes,            
         )
         if model_type == "roberta":
-            self.model = RobertaForCartography(model_config)
+            self.model = RobertaForSequenceClassification(model_config)
         elif model_type == "bert":
-            self.model = BertForCartography(model_config)
+            self.model = BertForSequenceClassification(model_config)
         else:
             raise TypeError("Model type not implemented")
         self.model_config = model_config
@@ -182,14 +182,21 @@ class TrainingDynamics:
                     batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
                 batch["label"] = batch["label"].to(self.trainer_config.device)
                 # forward step.
-                output = self.model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    token_type_ids=batch["token_type_ids"],
-                    labels=batch["label"]
-                )
-                loss = output["loss"]
-                logits = output["logits"]
+                if self.model_type == "bert":
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        token_type_ids=batch["token_type_ids"],
+                        labels=batch["label"]
+                    )
+                else:
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        labels=batch["label"]
+                    )
+                loss = output.loss
+                logits = output.logits
                 logits = logits.cpu().detach().tolist()
                 if loss.isnan().item() is False:
                     loss.backward()
@@ -279,14 +286,21 @@ class TrainingDynamics:
                 if self.model_type == "bert":
                     batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
                 batch["label"] = batch["label"].to(self.trainer_config.device)
-                output = self.model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    token_type_ids=batch["token_type_ids"],
-                    labels=batch["label"]
-                )
-            loss = output["loss"]
-            logits = output["logits"]
+                if self.model_type == "bert":
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        token_type_ids=batch["token_type_ids"],
+                        labels=batch["label"]
+                    )
+                else:
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        labels=batch["label"]
+                    )
+            loss = output.loss
+            logits = output.logits
             # accumulate eval loss.
             loss = loss.cpu().detach()
             self.eval_loss += loss.item()
@@ -390,14 +404,21 @@ class TrainingDynamics:
                     batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
                 batch["label"] = batch["label"].to(self.trainer_config.device)
                 # forward step.
-                output = self.model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    token_type_ids=batch["token_type_ids"],
-                    labels=batch["label"]
-                )
-                loss = output["loss"]
-                logits = output["logits"]
+                if self.model_type == "bert":
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        token_type_ids=batch["token_type_ids"],
+                        labels=batch["label"]
+                    )
+                else:
+                    output = self.model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        labels=batch["label"]
+                    )
+                loss = output.loss
+                logits = output.logits
                 logits = logits.cpu().detach().tolist()
                 if loss.isnan().item() is False:
                     loss.backward()
@@ -427,7 +448,7 @@ class TrainingDynamics:
                 epoch_log["free_memory"] = self.gpu_mem_manager.free()
                 # epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
                 # FOR DEBUGGING
-                # if step == 50: break
+                if step == 50: break
                 with open(epoch_log_path, "a") as f:
                     f.write(json.dumps(epoch_log)+"\n")
                 
