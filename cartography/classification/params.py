@@ -205,7 +205,7 @@ class ParamsV2:
         # Whether to run eval on the dev set.
         self.do_test: bool = configs.get("do_test", False)
         # Whether to use adapters or not.
-        self.use_adapter: bool = True
+        self.use_adapter: bool = configs.get("use_adapter", False)
         # The adapter to be used.
         self.adapter = "multinli"
 

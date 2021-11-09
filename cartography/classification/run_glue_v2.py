@@ -33,8 +33,12 @@ from transformers import (
     BertTokenizer,
     RobertaConfig,
     RobertaTokenizer,
+    BertModelWithHeads,
+    RobertaModelWithHeads,
     get_linear_schedule_with_warmup,
 )
+import transformers
+transformers.logging.set_verbosity_error()
 # from transformers import AdamW, BertTokenizer, RobertaTokenizer, get_linear_schedule_with_warmup
 from cartography.classification.glue_utils import adapted_glue_compute_metrics as compute_metrics
 # NOTE: removed token_type_ids from adapted_glue_convert_examples_to_featuresV2
@@ -67,6 +71,14 @@ MODEL_CLASSES = {
     "bert_mc": (BertConfig, AdaptedBertForMultipleChoice, BertTokenizer),
     "roberta": (RobertaConfig, AdaptedRobertaForSequenceClassification, RobertaTokenizer),
     "roberta_mc": (RobertaConfig, AdaptedRobertaForMultipleChoice, RobertaTokenizer),
+}
+ADAPTER_MODEL_CLASSES = {
+    "bert": (BertConfig, BertModelWithHeads, BertTokenizer),
+    "roberta": (RobertaConfig, RobertaModelWithHeads, RobertaTokenizer),
+}
+TASK_TO_ADAPTER_MAP = {
+    "MNLI": "multinli",
+    "mnli": "multinli",
 }
 
 
@@ -135,7 +147,8 @@ def train(args, train_dataset, model, tokenizer):
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
+    if args.n_gpu > 1 and not args.use_adapter:
+        print("multiple gpus found and adapter is not being used")
         model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
@@ -179,6 +192,7 @@ def train(args, train_dataset, model, tokenizer):
 
     tr_loss, logging_loss, epoch_loss = 0.0, 0.0, 0.0
     model.zero_grad()
+    # print("model.zero_grad():", type(model))
     train_iterator = trange(epochs_trained,
                             int(args.num_train_epochs),
                             desc="Epoch",
@@ -207,8 +221,10 @@ def train(args, train_dataset, model, tokenizer):
             if steps_trained_in_this_epoch > 0:
                 steps_trained_in_this_epoch -= 1
                 continue
-
-            model.train()
+            if args.use_adapter:
+                model.train_adapter(args.task_name)
+            else:
+                model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {"input_ids": batch[0], "attention_mask": batch[1], "labels": batch[3]}
             if args.model_type != "distilbert":
@@ -266,7 +282,7 @@ def train(args, train_dataset, model, tokenizer):
                             eval_key = "eval_{}".format(key)
                             epoch_log[eval_key] = value
 
-                    epoch_log["learning_rate"] = scheduler.get_lr()[0]
+                    epoch_log["learning_rate"] = scheduler.get_last_lr()[0]
                     epoch_log["loss"] = (tr_loss - logging_loss) / args.logging_steps
                     logging_loss = tr_loss
 
@@ -296,7 +312,7 @@ def train(args, train_dataset, model, tokenizer):
                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
-            epoch_iterator.set_description(f"lr = {scheduler.get_lr()[0]:.8f}, "
+            epoch_iterator.set_description(f"lr = {scheduler.get_last_lr()[0]:.8f}, "
                                            f"loss = {(tr_loss-epoch_loss)/(step+1):.4f}")
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -649,22 +665,49 @@ def run_transformer(args):
         torch.distributed.barrier()
 
     args.model_type = args.model_type.lower()
-    config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
-    config = config_class.from_pretrained(
-        args.config_name if args.config_name else args.model_name_or_path,
-        num_labels=num_labels,
-        finetuning_task=args.task_name,
-        cache_dir=args.cache_dir if args.cache_dir else None,)
+    if args.use_adapter:
+        config_class, model_class, tokenizer_class = ADAPTER_MODEL_CLASSES[args.model_type]
+    else:
+        config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     tokenizer = tokenizer_class.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
         do_lower_case=args.do_lower_case,
         cache_dir=args.cache_dir if args.cache_dir else None,)
-    model = model_class.from_pretrained(
-        args.model_name_or_path,
-        from_tf=bool(".ckpt" in args.model_name_or_path),
-        config=config,
-        cache_dir=args.cache_dir if args.cache_dir else None,)
-
+    if args.use_adapter:
+        config = config_class.from_pretrained(
+            args.config_name if args.config_name else args.model_name_or_path)
+        model = model_class.from_pretrained(
+            args.model_name_or_path,
+            config=config
+        )
+        print(f"\x1b[32;1madding classification head for {args.task_name} with {num_labels} labels\x1b[0m")
+        model.add_classification_head(args.task_name, num_labels=num_labels)
+        if args.task_name not in model.config.adapters:
+            # # resolve the adapter config
+            # adapter_config = AdapterConfig.load(
+            #     adapter_args.adapter_config,
+            #     non_linearity=adapter_args.adapter_non_linearity,
+            #     reduction_factor=adapter_args.adapter_reduction_factor,
+            # )
+            
+            # add a new adapter and activate it.
+            print(f"\x1b[32;1madding adapter for {args.task_name}\x1b[0m")
+            model.add_adapter(args.task_name)
+            print(f"\x1b[32;1mactivating adapter for {args.task_name}\x1b[0m")
+            # model.add_adapter(args.task_name, config=adapter_config)
+            model.set_active_adapters(args.task_name)
+    else:
+        config = config_class.from_pretrained(
+            args.config_name if args.config_name else args.model_name_or_path,
+            num_labels=num_labels,
+            finetuning_task=args.task_name,
+            cache_dir=args.cache_dir if args.cache_dir else None,)
+        model = model_class.from_pretrained(
+            args.model_name_or_path,
+            from_tf=bool(".ckpt" in args.model_name_or_path),
+            config=config,
+            cache_dir=args.cache_dir if args.cache_dir else None,)
+            
     if args.local_rank == 0:
         # Make sure only the first process in distributed training will download model & vocab
         torch.distributed.barrier()
@@ -678,9 +721,11 @@ def run_transformer(args):
     if args.do_train:
         # If training for the first time, remove cache. If training from a checkpoint, keep cache.
         if os.path.exists(args.features_cache_dir) and not args.overwrite_output_dir:
-            logger.info(f"Found existing cache for the same seed {args.seed}: "
-                        f"{args.features_cache_dir}...Deleting!")
-            shutil.rmtree(args.features_cache_dir)
+            # do not overwrite cached features!
+            pass
+            # logger.info(f"Found existing cache for the same seed {args.seed}: "
+            #             f"{args.features_cache_dir}...Deleting!")
+            # shutil.rmtree(args.features_cache_dir)
 
         # Create output directory if needed
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
@@ -717,12 +762,9 @@ def run_transformer(args):
         eval_splits.append("test")
 
     if args.do_test or args.do_eval and args.local_rank in [-1, 0]:
-        if not args.use_adapter:
-            tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
-            checkpoints = [args.output_dir]
-        else:
-            tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
-            checkpoints = [args.model_name_or_path]
+        
+        tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        checkpoints = [args.output_dir]
         if args.eval_all_checkpoints:
             checkpoints = list(
                 os.path.dirname(c) for c in sorted(
@@ -737,9 +779,6 @@ def run_transformer(args):
             prefix += checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
             model = model_class.from_pretrained(checkpoint)
-            # simple loading of pre-trained adapters
-            if args.use_adapter: 
-                model.load_adapter(args.adapter)
             model.to(args.device)
             for eval_split in eval_splits:
                 save_args_to_file(args, mode=eval_split)
@@ -781,10 +820,6 @@ def main():
     parser.add_argument("--use_adapter",
                         action="store_true",
                         help="Whether to use adapters.")
-    parser.add_argument("--adapter",
-                        type=str,
-                        default="multinli",
-                        help="Whether to use adapters.")
     parser.add_argument("--test",
                         type=os.path.abspath,
                         help="OOD test set.")
@@ -800,10 +835,11 @@ def main():
     else:
         print("invalid CONFIG file")
         other_args = {}
+    print("use_adapter", args_from_cli.use_adapter)
     other_args.update(**vars(args_from_cli))
     args = ParamsV2(MODEL_CLASSES, processors, other_args)
-#     import pprint
-#     pprint.pprint(vars(args))
+    # import pprint
+    # pprint.pprint(vars(args))
     run_transformer(args)
 
 
