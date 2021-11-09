@@ -26,8 +26,6 @@ from transformers import (
     RobertaConfig,
     BertTokenizer,
     RobertaTokenizer,
-    BertModelWithHeads,
-    RobertaModelWithHeads,
     BertForSequenceClassification,
     RobertaForSequenceClassification,
     get_linear_schedule_with_warmup,
@@ -39,6 +37,10 @@ try:
 except ImportError:
     from utils import *
     from datautils import GLUEDataset
+try:
+    from transformers import BertModelWithHeads, RobertaModelWithHeads
+except ImportError:
+    print("install transformer adapters to get td for ")
 # set logging level for transformers
 transformers.logging.set_verbosity_error()
 # the default trainer config.

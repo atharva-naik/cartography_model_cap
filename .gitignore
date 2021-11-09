@@ -143,6 +143,7 @@ rob_base_mnli/roberta-base-mnli.pt
 rob_base_mnli_fixed/roberta-base-mnli.pt
 rob_base_mnli_adapter/roberta-base-mnli-adapter.pt
 rob_base_mnli_adapter_multinli/roberta-base-mnli-adapter-multinli.pt
+rob_base_mnli_hugdev/roberta-base-mnli.pt
 
 # ignore zip of traning dynamics and saved model
 rob_base_mnli.zip
