@@ -26,6 +26,8 @@ from transformers import (
     RobertaConfig,
     BertTokenizer,
     RobertaTokenizer,
+    BertModelWithHeads,
+    RobertaModelWithHeads,
     BertForSequenceClassification,
     RobertaForSequenceClassification,
     get_linear_schedule_with_warmup,
@@ -67,24 +69,24 @@ TrainConfig.patience = 3
 TrainConfig.batch_size = 64 # training batch size.
 TrainConfig.num_classes = 3 # number of classes in target task.
 TrainConfig.num_workers = 4 # number of threads for dataloading.
-TrainConfig.device = "cuda:0" # device for training.
 TrainConfig.weight_decay = 0 # weight decay for params.
-TrainConfig.task_name = "MNLI" 
 TrainConfig.warmup_steps = 0
+TrainConfig.device = "cuda:0" # device for training.
+TrainConfig.task_name = "mnli" # TASK.
 TrainConfig.grad_accumulation_steps = 1 
 TrainConfig.target_metric = "acc" # target metric is used for model saving.
 # directory for storing training dynamics.
-if notebook:
-    TrainConfig.train_dy_dir = "/content/drive/MyDrive/SDM/rob_base_mnli_adapter_multinli" 
-    TrainConfig.save_as = "roberta-base-mnli-adapter-multinli.pt" # name to be given to the saved model.
-else:
-    TrainConfig.train_dy_dir = "rob_large_mnli_lr2" 
-    TrainConfig.save_as = "roberta-large-mnli.pt" # name to be given to the saved model.
+TrainConfig.train_dy_dir = "rob_base_mnli_hugdev" 
+TrainConfig.save_as = "roberta-base-mnli.pt" # name to be given to the saved model.
     
     
 class TrainingDynamics:
     def __init__(self, model_type="roberta", model_name_or_path: str="roberta-base",
-                 tokenizer_name_or_path: str="../roberta-base-tok", **trainer_config):
+                 tokenizer_name_or_path: str="../roberta-base-tok", use_adapter=False, 
+                 **trainer_config):
+        self.task_map = {
+            "mnli": "multinli"
+        }
         self.trainer_config = TrainConfig
         self.trainer_config.update(**trainer_config)
         pprint_args(vars(self.trainer_config))
@@ -92,14 +94,31 @@ class TrainingDynamics:
             model_name_or_path,
             num_labels=self.trainer_config.num_classes,            
         )
-        if model_type == "roberta":
-            self.model = RobertaForSequenceClassification(model_config)
-        elif model_type == "bert":
-            self.model = BertForSequenceClassification(model_config)
+        task_name = self.task_map.get(self.trainer_config.task_name, 
+                                      self.trainer_config.task_name)
+        if use_adapter:
+            if model_type == "roberta": self.model = RobertaModelWithHeads.from_pretrained(model_name_or_path)
+            elif model_type == "bert": self.model = BertModelWithHeads.from_pretrained(model_name_or_path)
+            else: TypeError("Model type not implemented or lacks adapter support")
+            print(f"\x1b[32;1madding classification head for {task_name}, with {self.trainer_config.num_classes} target classes\x1b[0m")
+            if task_name not in self.model.config.adapters:
+                # resolve the adapter config
+                # adapter_config = AdapterConfig.load(
+                #     adapter_args.adapter_config,
+                #     non_linearity=adapter_args.adapter_non_linearity,
+                #     reduction_factor=adapter_args.adapter_reduction_factor,
+                # )
+                
+                # add a new adapter
+                print(f"\x1b[32;1madding adapter for {task_name}\x1b[0m")
+                self.model.add_adapter(task_name)
+            self.model.add_classification_head(task_name, num_labels=self.trainer_config.num_classes)
         else:
-            raise TypeError("Model type not implemented")
-        self.model_config = model_config
+            if model_type == "roberta": self.model = RobertaForSequenceClassification(model_config)
+            elif model_type == "bert": self.model = BertForSequenceClassification(model_config)
+            else: TypeError("Model type not implemented")
         self.model_type = model_type
+        self.model_config = model_config
         # accumulate all arguments.
         self.trainer_config.update(**vars(model_config))
         # create optimizer.
@@ -112,15 +131,17 @@ class TrainingDynamics:
             tokenizer_name_or_path
         )
         self.model.to(self.trainer_config.device)
+        self.best_epoch, self.current_epoch = 0, 0
         self.gpu_mem_manager = GPUMemoryManager(self.trainer_config.device)
-        self.best_epoch = 0
-        self.current_epoch = 0
-        self.task_map = {
-            "mnli": "multinli"
-        }
+        self.use_adapter = use_adapter
     
     def train(self, path: Union[str, Path], eval_path: Union[str, Path, None]=None):
         # create datasets and dataloaders.
+        task_name = self.task_map.get(self.trainer_config.task_name, 
+                                      self.trainer_config.task_name)
+        if self.use_adapter: 
+            print(f"\x1b[32;1mactivating classification head for {task_name}\x1b[0m")
+            self.model.set_active_adapters(task_name)
         set_seed(self.trainer_config.seed)
         path = str(path)
         self.trainset = GLUEDataset(
@@ -132,11 +153,11 @@ class TrainingDynamics:
             shuffle=True, num_workers=self.trainer_config.num_workers
         )
         # create scheduler.
-        total_steps = len(self.trainloader) // self.trainer_config.grad_accumulation_steps * self.trainer_config.num_epochs
-#         self.scheduler = get_linear_schedule_with_warmup(
-#             self.optimizer, num_training_steps=total_steps,
-#             num_warmup_steps=self.trainer_config.warmup_steps
-#         )
+        # total_steps = len(self.trainloader) // self.trainer_config.grad_accumulation_steps * self.trainer_config.num_epochs
+        # self.scheduler = get_linear_schedule_with_warmup(
+        #     self.optimizer, num_training_steps=total_steps,
+        #     num_warmup_steps=self.trainer_config.warmup_steps
+        # )
         self.train_acc = 0
         self.best_eval_acc = 0
         self.train_loss = 0
@@ -152,7 +173,8 @@ class TrainingDynamics:
         )
         os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
         for i in range(self.trainer_config.num_epochs):
-            self.model.train()
+            if self.use_adapter: self.model.train_adapter(task_name)
+            else: self.model.train()
             epoch_log_path = os.path.join(
                 self.trainer_config.train_dy_dir,
                 f"epoch_{i}.log"
@@ -208,18 +230,14 @@ class TrainingDynamics:
                 for id, logit, label in zip(ids, logits, labels):
                     tot += 1
                     # print(label, id)
-                    logits_dict = {
-                        "guid": id,
-                        f"logits_epoch_{i}": logit,
-                        "gold": label 
-                    }
+                    logits_dict = {"guid": id, f"logits_epoch_{i}": logit, "gold": label}
                     pred = np.argmax(logit)
                     if pred == label: self.train_acc += 1
                     with open(file_path, "a") as f:
                         f.write(json.dumps(logits_dict)+"\n")
+                # experimenting with turning off clipping gradients.
                 if (step + 1) % self.trainer_config.grad_accumulation_steps == 0:
                     nn.utils.clip_grad_norm_(self.model.parameters(), 1)
-                
                 loss = loss.cpu().detach()
                 if loss.isnan().item() is False:
                     self.train_loss += loss.item()
@@ -337,140 +355,6 @@ class TrainingDynamics:
             "state_dict": self.model.state_dict(),
         }
         torch.save(ckpt_dict, ckpt_path)
-        
-    def train_adapter(self, path: Union[str, Path], eval_path: Union[str, Path, None]=None):
-        # create datasets and dataloaders.
-        path = str(path)
-        set_seed(self.trainer_config.seed)
-        self.trainset = GLUEDataset(
-            path=path, tokenizer=self.tokenizer, 
-            task_name=self.trainer_config.task_name,
-        )
-        self.trainloader = DataLoader(
-            self.trainset, batch_size=self.trainer_config.batch_size,  
-            shuffle=True, num_workers=self.trainer_config.num_workers
-        )
-        # create scheduler.
-        # total_steps = len(self.trainloader) // self.trainer_config.grad_accumulation_steps * self.trainer_config.num_epochs
-        # self.scheduler = get_linear_schedule_with_warmup(
-        #     self.optimizer, num_training_steps=total_steps,
-        #     num_warmup_steps=self.trainer_config.warmup_steps
-        # )
-        self.train_acc = 0
-        self.train_loss = 0
-        self.best_eval_acc = 0
-        train_dy_dir = os.path.join(self.trainer_config.train_dy_dir,
-            "training_dynamics"
-        )
-        os.makedirs(train_dy_dir, exist_ok=True)
-        save_as = os.path.join(
-            self.trainer_config.train_dy_dir,
-            self.trainer_config.save_as
-        )
-        os.makedirs(self.trainer_config.train_dy_dir, exist_ok=True)
-        for i in range(self.trainer_config.num_epochs):
-            task_name = self.task_map.get(
-                self.trainer_config.task_name, 
-                self.trainer_config.task_name
-            )
-            # changed for training adapter only.
-            self.model.train_adapter(task_name) 
-            epoch_log_path = os.path.join(
-                self.trainer_config.train_dy_dir,
-                f"epoch_{i}.log"
-            )
-            with open(epoch_log_path, "w") as f: pass
-            file_path = os.path.join(
-                train_dy_dir, 
-                f"dynamics_epoch_{i}.jsonl"
-            )
-            with open(file_path, "w") as f: pass
-            self.best_epoch = i
-            self.current_epoch = i
-            batch_iterator = tqdm(
-                enumerate(self.trainloader),
-                total=len(self.trainloader),
-                desc="",
-            )
-            epoch_log = {}
-            for step, batch in batch_iterator:
-                desc = f"{self.model_type}:{i}/{self.trainer_config.num_epochs} loss:{self.train_loss/(step+1e-12):.3f} acc:{(100*self.train_acc/(self.trainer_config.batch_size*step+1e-12)):.2f}"
-                batch_iterator.set_description(desc)              
-                self.model.zero_grad()
-                # move inputs to device.
-                batch["input_ids"] = batch["input_ids"].to(self.trainer_config.device)
-                batch["attention_mask"] = batch["attention_mask"].to(self.trainer_config.device)
-                if self.model_type == "bert":
-                    batch["token_type_ids"] = batch["token_type_ids"].to(self.trainer_config.device)
-                batch["label"] = batch["label"].to(self.trainer_config.device)
-                # forward step.
-                if self.model_type == "bert":
-                    output = self.model(
-                        input_ids=batch["input_ids"],
-                        attention_mask=batch["attention_mask"],
-                        token_type_ids=batch["token_type_ids"],
-                        labels=batch["label"]
-                    )
-                else:
-                    output = self.model(
-                        input_ids=batch["input_ids"],
-                        attention_mask=batch["attention_mask"],
-                        labels=batch["label"]
-                    )
-                loss = output.loss
-                logits = output.logits
-                logits = logits.cpu().detach().tolist()
-                if loss.isnan().item() is False:
-                    loss.backward()
-                if self.trainer_config.grad_accumulation_steps > 1:
-                    loss = loss / self.trainer_config.grad_accumulation_steps
-                # move ids and labels to cpu and convert to list, for logging td.
-                ids = batch["id"].cpu().detach().tolist()
-                labels = batch["label"].cpu().detach().tolist()
-                for id, logit, label in zip(ids, logits, labels):
-                    # print(label, id)
-                    logits_dict = {
-                        "guid": id,
-                        f"logits_epoch_{i}": logit,
-                        "gold": label 
-                    }
-                    pred = np.argmax(logit)
-                    if pred == label: self.train_acc += 1
-                    with open(file_path, "a") as f:
-                        f.write(json.dumps(logits_dict)+"\n")
-                if (step + 1) % self.trainer_config.grad_accumulation_steps == 0:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), 1)
-                
-                loss = loss.cpu().detach()
-                if loss.isnan().item() is False:
-                    self.train_loss += loss.item()
-                epoch_log["loss"] = f"{(self.train_loss/(step+1)):.5f}"
-                epoch_log["free_memory"] = self.gpu_mem_manager.free()
-                # epoch_log["learning_rate"] = self.scheduler.get_last_lr()[0]
-                # FOR DEBUGGING
-                if step == 50: break
-                with open(epoch_log_path, "a") as f:
-                    f.write(json.dumps(epoch_log)+"\n")
-                
-                self.optimizer.step()
-                # self.model.zero_grad()
-            self.train_loss /= len(self.trainloader)
-            self.train_acc /= len(self.trainloader)
-            # self.scheduler.step()  # Update learning rate schedule
-            
-            if eval_path:
-                eval_acc, _ = self.evaluate(eval_path)
-                if eval_acc > self.best_eval_acc:
-                    self.best_eval_acc = eval_acc
-                    self.best_epoch = self.current_epoch
-                    print(f"saving model with best_acc={self.best_eval_acc}, best_epoch={self.best_epoch} at {save_as}")
-                    # save model with best eval accuracy.
-                    self.save(save_as)
-            # patience condition from original repo: stop training if performance doesn't improve after `patience` no. of epochs.
-            if self.current_epoch - self.best_epoch >= self.trainer_config.patience:
-                break
-            self.train_acc = 0
-            self.train_loss = 0
     
     
 def hello_world(**args):

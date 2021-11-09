@@ -217,14 +217,14 @@ def read_jsonl(path, key="pairID",
 
 ## Namespaces for dataset structure info.
 Keys = {}
-Keys["MNLI"] = argparse.Namespace()
-Keys["MNLI"].key = "pairID"
-Keys["MNLI"].class_key = "gold_label"
-Keys["MNLI"].label_map = {"neutral": 0, "entailment": 1, "contradiction": 2}
-Keys["SNLI"] = argparse.Namespace()
-Keys["SNLI"].key = "pairID"
-Keys["SNLI"].class_key = "gold_label"
-Keys["SNLI"].label_map = {"neutral": 0, "entailment": 1, "contradiction": 2}
+Keys["mnli"] = argparse.Namespace()
+Keys["mnli"].key = "pairID"
+Keys["mnli"].class_key = "gold_label"
+Keys["mnli"].label_map = {"neutral": 0, "entailment": 1, "contradiction": 2}
+Keys["snli"] = argparse.Namespace()
+Keys["snli"].key = "pairID"
+Keys["snli"].class_key = "gold_label"
+Keys["snli"].label_map = {"neutral": 0, "entailment": 1, "contradiction": 2}
 
 ## Namespace for tokenization config.
 TokParams = argparse.Namespace()
