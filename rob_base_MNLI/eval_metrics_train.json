@@ -1,0 +1,5 @@
+{"epoch": 0, "train_acc": 0.82670574634201, "best_dev_performance": 0.8638818135506877, "avg_batch_loss": 341.8840517401695, "learning_rate": 1.0535026571476461e-05}
+{"epoch": 1, "train_acc": 0.8774898014270363, "best_dev_performance": 0.8771268466632705, "avg_batch_loss": 251.7865525383968, "learning_rate": 1.0076981937934006e-05}
+{"epoch": 2, "train_acc": 0.905732591125077, "best_dev_performance": 0.8771268466632705, "avg_batch_loss": 199.92726494045928, "learning_rate": 9.618937304391552e-06}
+{"epoch": 3, "train_acc": 0.9262494206803124, "best_dev_performance": 0.8771268466632705, "avg_batch_loss": 159.98096180037828, "learning_rate": 9.160892670849097e-06}
+{"epoch": 4, "train_acc": 0.9416605976032717, "best_dev_performance": 0.8771268466632705, "avg_batch_loss": 130.35616020855377, "learning_rate": 8.702848037306642e-06}

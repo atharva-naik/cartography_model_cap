@@ -148,3 +148,10 @@ rob_base_mnli_hugdev/roberta-base-mnli.pt
 # ignore zip of traning dynamics and saved model
 rob_base_mnli.zip
 rob_base_mnli_adapter_multinli.zip
+
+# ignore final saved models
+rob_base_MNLI/pytorch_model.bin
+rob_large_MNLI/pytorch_model.bin
+rob_base_adapter_MNLI/pytorch_model.bin
+rob_large_adapter_MNLI/pytorch_model.bin
+

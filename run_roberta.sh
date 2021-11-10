@@ -10,10 +10,11 @@
 # python -m cartography.classification.run_glue_v2 -c configs/mnli-rob-base.json --do_train --do_eval -o rob_base_MNLI
 
 # roberta-large with adapters.
-# python -m cartography.classification.run_glue_v2 -c configs/mnli-rob-large.json --do_train --do_eval -o rob_large_adapter_MNLI
+# echo -e "\x1b[34m roberta-large with adapter -o rob_large_adapter_MNLI \x1b[0m"
+# python -m cartography.classification.run_glue_v2 -c configs/mnli-rob-large.json --do_train --do_eval --use_adapter -o rob_large_adapter_MNLI
 
 # roberta-base with adapters.
-echo -e "\x1b[34m roberta-base with adapter -o rob_base_adapter_MNLI \x1b[0m"
-python -m cartography.classification.run_glue_v2 -c configs/mnli-rob-base.json --do_train --do_eval --use_adapter -o rob_base_adapter_MNLI
+# echo -e "\x1b[34m roberta-base with adapter -o rob_base_adapter_MNLI \x1b[0m"
+# python -m cartography.classification.run_glue_v2 -c configs/mnli-rob-base.json --do_train --do_eval --use_adapter -o rob_base_adapter_MNLI
 
 # python -m cartography.classification.run_glue_v2 -c configs/mnli.json --do_test -o roberta-MNLI-adapter-MNLI
